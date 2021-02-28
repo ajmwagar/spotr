@@ -2,19 +2,19 @@ use serde::{Serialize, Deserialize};
 
 const CRATE_NAME: &str = "spotr";
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct Config {
     pub auth: AuthTokens,
     pub defaults: Defaults
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct AuthTokens {
     pub refresh_token: Option<String>,
     pub access_token: Option<String>
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug, Clone)]
 pub struct Defaults {
     pub playlist: Option<String>,
     pub device: Option<String>

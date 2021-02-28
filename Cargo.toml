@@ -10,8 +10,13 @@ edition = "2018"
 confy = "0.4.0"
 clap = "3.0.0-beta.2"
 serde = { version = "1", features = ["derive"] }
-reqwest = "0.11.1"
+reqwest = { version = "0.11.1", features = ["json"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 open = "1.4.0"
 oauth2 = { version = "4.0.0-alpha.6"  }
 url = "2.2.1"
+base64 = "0.13.0"
+serde_json = "1.0.62"
+chrono = "0.4.19"
+strum = { version = "0.20", features = ["derive"] }
+colored = "2.0.0"

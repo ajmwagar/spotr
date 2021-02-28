@@ -3,14 +3,14 @@ const SPOTIFY_SCOPES: &[&str] = &["user-read-private", "user-read-email"];
 const SPOTIFY_REDIRECT_URL: &str = "http://localhost:8080";
 
 const SPOTIFY_AUTH_URL: &str = "https://accounts.spotify.com/authorize";
-const SPOTIFY_TOKEN_URL: &str = "https://accounts.spotify.com/token";
+const SPOTIFY_TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
 
-use std::error::Error;
+use std::{collections::HashMap, error::Error};
+use colored::Colorize;
 
-use oauth2::{
-    AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
-    RedirectUrl, Scope, TokenResponse, TokenUrl,
-};
+use serde::{Serialize, Deserialize};
+
+use oauth2::{AccessToken, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, RequestTokenError, Scope, TokenResponse, TokenUrl};
 
 use oauth2::basic::BasicClient;
 use oauth2::reqwest::async_http_client;
@@ -36,6 +36,7 @@ fn get_oauth_client() -> Result<BasicClient, Box<dyn Error>> {
 }
 
 pub async fn login() -> Result<(), Box<dyn Error>> {
+    println!("{}", "Starting OAuth2.0 PKCE Flow".italic());
     let client = get_oauth_client()?;
 
     // Generate a PKCE challenge.
@@ -45,130 +46,179 @@ pub async fn login() -> Result<(), Box<dyn Error>> {
     let (auth_url, csrf_state) = client
         .authorize_url(CsrfToken::new_random)
         // Set the desired scopes.
-        .add_scope(Scope::new("read".to_string()))
-        .add_scope(Scope::new("write".to_string()))
+        // .add_scope(Scope::new("user-read-recently-played".to_string()))
+        // .add_scope(Scope::new("user-read-playback-state".to_string()))
+        // .add_scope(Scope::new("playlist-modify-private".to_string()))
+        // .add_scope(Scope::new("playlist-read-private".to_string()))
+        .add_scope(Scope::new("app-remote-control".to_string()))
+        .add_scope(Scope::new("user-modify-playback-state".to_string()))
+        // .add_scope(Scope::new("streaming".to_string()))
+        // .add_scope(Scope::new("user-top-read".to_string()))
         // Set the PKCE code challenge.
         .set_pkce_challenge(pkce_challenge)
         .url();
 
     // Open URL in browser
     match open::that(auth_url.to_string()) {
-        Ok(_) => println!("Opened {} in your browser.", auth_url),
+        Ok(_) => println!("Opened {} in your browser.", "Spotify".green().bold()),
         Err(_) => eprintln!("Failed to open browser. Please browse to: {}", auth_url),
     }
 
+    println!("{}", "Please complete the login flow in your browser.".italic().green());
+
+    let pkce_verify_string = pkce_verifier.secret();
     // A very naive implementation of the redirect server.
     let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
     loop {
         if let Ok((mut stream, _)) = listener.accept().await {
-            let code;
-            let state;
-            {
+            let (code, state) = {
                 let mut reader = BufReader::new(&mut stream);
 
                 let mut request_line = String::new();
                 reader.read_line(&mut request_line).await.unwrap();
 
                 let redirect_url = request_line.split_whitespace().nth(1).unwrap();
-                let url = Url::parse(&("http://localhost".to_string() + redirect_url)).unwrap();
 
-                let code_pair = url
+                let uri_str = &(SPOTIFY_REDIRECT_URL.to_string() + redirect_url);
+
+                let url = Url::parse(uri_str).unwrap();
+
+                let code = if let Some(code_pair) = url
                     .query_pairs()
                     .find(|pair| {
                         let &(ref key, _) = pair;
                         key == "code"
-                    })
-                    .unwrap();
+                    }) {
+                    let (_, value) = code_pair;
+                    let code = AuthorizationCode::new(value.into_owned());
+                    Some(code)
+                } else {
+                    None
+                };
 
-                let (_, value) = code_pair;
-                code = AuthorizationCode::new(value.into_owned());
-
-                let state_pair = url
+                let state = if let Some(state_pair) = url
                     .query_pairs()
                     .find(|pair| {
                         let &(ref key, _) = pair;
                         key == "state"
-                    })
-                    .unwrap();
+                    }) {
+                    let (_, value) = state_pair;
+                    let state = CsrfToken::new(value.into_owned());
+                    Some(state)
+                } else {
+                    None
+                };
 
-                let (_, value) = state_pair;
-                state = CsrfToken::new(value.into_owned());
-            }
+                (code, state)
+            };
 
-            let message = "Go back to your terminal :)";
-            let response = format!(
-                "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{}",
-                message.len(),
-                message
-            );
-            stream.write_all(response.as_bytes()).await.unwrap();
+            if let (Some(code), Some(state)) = (code, state) {
+                let message = "Go back to your terminal :)";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n{}",
+                    message.len(),
+                    message
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
 
-            println!("Spotify returned the following code:\n{}\n", code.secret());
-            println!(
-                "Spotify returned the following state:\n{} (expected `{}`)\n",
-                state.secret(),
-                csrf_state.secret()
-            );
-
-            // Exchange the code with a token.
-            let token_res = client
-                .exchange_code(code)
-                .set_pkce_verifier(pkce_verifier)
-                .request_async(async_http_client)
-                .await;
-
-            println!("Spotify returned the following token:\n{:?}\n", token_res);
-
-            if let Ok(token) = token_res {
-                let refresh_token = token.refresh_token();
-                let access_token = token.access_token();
-                let scopes = token.scopes();
-                println!("Spotify returned the following scopes:\n{:?}\n", scopes);
+                let (access_token, refresh_token) = get_access_token(&code, &PkceCodeVerifier::new(pkce_verify_string.clone())).await?;
 
                 // Save token to config
-                println!("Saving tokens.");
                 let config = Config {
                     auth: AuthTokens {
-                        refresh_token: match refresh_token {
-                            Some(token) => Some(token.secret().clone()),
-                            None => None,
-                        },
+                        refresh_token: Some(refresh_token.secret().clone()),
                         access_token: Some(access_token.secret().clone()),
                     },
                     ..load_config()?
                 };
 
                 save_config(config)?;
-            }
 
-            // The server will terminate itself after collecting the first code.
-            break;
+                println!("{}", "Logged in!".green().bold());
+                // The server will terminate itself after collecting the first code.
+                break;
+            }
         }
     }
 
     Ok(())
 }
 
-pub async fn refresh_token() -> Result<AccessToken, Box<dyn Error>> {
+pub async fn refresh_token() -> Result<Config, Box<dyn Error>> {
     let config = load_config()?;
 
-    let client = get_oauth_client()?;
-
-    // // Generate a PKCE challenge.
-    // let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
-
     if let Some(refresh_str) = config.auth.refresh_token {
-        let refresh = oauth2::RefreshToken::new(refresh_str);
+        let http = reqwest::Client::new();
+        let mut params = HashMap::new();
+        
+        params.insert("client_id", SPOTIFY_CLIENT_ID.to_string());
+        params.insert("grant_type", "refresh_token".to_string());
+        params.insert("refresh_token", refresh_str);
 
-        let token_res = client
-            .exchange_refresh_token(&refresh)
-            .request_async(async_http_client)
-            .await?;
+        let resp = http.post(SPOTIFY_TOKEN_URL).form(&params).send().await?;
+        let tokens: Tokens = resp.json().await?;
 
-        Ok(token_res.access_token().clone())
+        let config = Config {
+            auth: AuthTokens {
+                refresh_token: Some(tokens.refresh_token),
+                access_token: Some(tokens.access_token),
+            },
+            ..config
+        };
+
+        save_config(config.clone())?;
+
+        Ok(config)
+    } else {
+        Err(String::from("No refresh token in config. Please login using sp login.").into())
+    }
+}
+
+pub async fn get_access_token(code: &AuthorizationCode, code_verifier: &PkceCodeVerifier) -> Result<(AccessToken, RefreshToken), Box<dyn Error>> {
+    let http = reqwest::Client::new();
+
+    let mut params = HashMap::new();
+    
+    params.insert("client_id", SPOTIFY_CLIENT_ID.to_string());
+    params.insert("redirect_uri", SPOTIFY_REDIRECT_URL.to_string());
+    params.insert("grant_type", "authorization_code".to_string());
+    params.insert("code_verifier", code_verifier.secret().clone());
+    params.insert("code", code.secret().clone());
+
+    let resp = http.post(SPOTIFY_TOKEN_URL).form(&params).send().await?;
+    let tokens: Tokens = resp.json().await?;
+
+    Ok((AccessToken::new(tokens.access_token), RefreshToken::new(tokens.refresh_token)))
+}
+
+#[derive(Serialize, Deserialize)]
+struct Tokens {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_in: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_refresh() {
+        let result = refresh_token().await;
+        println!("Result: {:?}", result);
+        assert!(result.is_ok());
     }
 
-    else {
-        Err(String::from("No refresh token in config. Please login using sp login.").into())
+    #[tokio::test]
+    async fn test_login() {
+        let result = login().await;
+        println!("Result: {:?}", result);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_oauth_client() {
+        let res = get_oauth_client();
+        assert!(res.is_ok());
     }
 }

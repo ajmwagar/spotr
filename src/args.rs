@@ -23,9 +23,19 @@ pub enum SubCommand {
     #[clap(version = "0.1", author = "Avery Wagar <ajmw.subs@gmail.com>")]
     Save,
 
-    /// Login to the spotify api
-    /// 1. Opens the Spotify OAuth URL in a browser or prints it to screen.
-    /// 2. 
+    /// Login to the Spotify API using an OAuth2.0 PKCE Flow.
     #[clap(version = "0.1", author = "Avery Wagar <ajmw.subs@gmail.com>")]
-    Login
+    Login,
+    #[clap(version = "0.1", author = "Avery Wagar <ajmw.subs@gmail.com>")]
+    /// Show the currently playing song/podcast.
+    Current,
+    #[clap(version = "0.1", author = "Avery Wagar <ajmw.subs@gmail.com>")]
+    /// Skip to the next song.
+    Skip,
+    #[clap(version = "0.1", author = "Avery Wagar <ajmw.subs@gmail.com>")]
+    /// Skip to the previous song.
+    Back,
+    #[clap(version = "0.1", author = "Avery Wagar <ajmw.subs@gmail.com>")]
+    /// Print out some shorthand aliases for common commands for Bash/ZSH
+    Alias
 }
